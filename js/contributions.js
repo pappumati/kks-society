@@ -59,6 +59,12 @@ async function waiveContributionPenalty(id){
   }, {merge:true});
 }
 
+async function deleteContribution(id){
+  if(!confirm('Delete this contribution record? This cannot be undone.')) return;
+  await db.collection('contributions').doc(id).delete();
+  loadContributionMonth();
+}
+
 async function syncDuesForMonth(mKey){
   const members = await getMembers(true);
   const memberById = {};
@@ -89,6 +95,7 @@ async function syncDuesForMonth(mKey){
   if(updated>0) await batch.commit();
   return updated;
 }
+
 async function renderContributions(){
   const container = document.getElementById('viewShares');
   const now = new Date();
@@ -130,7 +137,9 @@ async function loadContributionMonth(){
         <div class="row">
           <div>
             <div class="who">${escapeHtml(c.memberName)}</div>
-            <div class="meta">${c.sharesAtTime} shares · Due ${fmtMoney(c.amountDue + (c.penaltyAmount||0))}${c.penaltyApplied?' (incl. ₹'+c.penaltyAmount+' penalty)':''}</div>
+            <div class="meta">${c.sharesAtTime} shares · Due ${fmtMoney(c.amountDue + (c.penaltyAmount||0))}${c.penaltyApplied?' (incl. ₹'+c.penaltyAmount+' penalty)':''} · Paid so far: ${fmtMoney(c.amountPaid||0)}</div>
+            <div class="meta" style="font-size:11px; opacity:0.6;">id: ${c.id}</div>
+            <a href="javascript:void(0)" style="font-size:12px; color:#B33A3A;" onclick="deleteContribution('${c.id}')">Delete record</a>
           </div>
           <div style="text-align:right;">
             <span class="pill ${c.status==='paid'?'paid':(c.status==='partial'?'pending':'due')}">${c.status}</span>
