@@ -69,23 +69,26 @@ async function syncDuesForMonth(mKey){
   let updated = 0;
 
   for(const c of list){
-    // Protect the audit trail: never touch a month that's already fully paid.
-    if(c.status === 'paid') continue;
     const m = memberById[c.memberId];
     if(!m) continue;
     const newDue = m.sharesCount * SOCIETY.shareValue;
     if(newDue === c.amountDue && m.sharesCount === c.sharesAtTime) continue;
+
+    const paid = c.amountPaid || 0;
+    const totalOwed = newDue + (c.penaltyAmount || 0);
+    const newStatus = paid >= totalOwed ? 'paid' : (paid > 0 ? 'partial' : 'unpaid');
+
     const ref = db.collection('contributions').doc(c.id);
     batch.set(ref, {
       sharesAtTime: m.sharesCount,
-      amountDue: newDue
+      amountDue: newDue,
+      status: newStatus
     }, {merge:true});
     updated++;
   }
   if(updated>0) await batch.commit();
   return updated;
 }
-
 async function renderContributions(){
   const container = document.getElementById('viewShares');
   const now = new Date();
