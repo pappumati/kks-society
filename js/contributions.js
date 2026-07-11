@@ -59,6 +59,33 @@ async function waiveContributionPenalty(id){
   }, {merge:true});
 }
 
+async function syncDuesForMonth(mKey){
+  const members = await getMembers(true);
+  const memberById = {};
+  members.forEach(m => memberById[m.id] = m);
+
+  const list = await getContributionsForMonth(mKey);
+  const batch = db.batch();
+  let updated = 0;
+
+  for(const c of list){
+    // Protect the audit trail: never touch a month that's already fully paid.
+    if(c.status === 'paid') continue;
+    const m = memberById[c.memberId];
+    if(!m) continue;
+    const newDue = m.sharesCount * SOCIETY.shareValue;
+    if(newDue === c.amountDue && m.sharesCount === c.sharesAtTime) continue;
+    const ref = db.collection('contributions').doc(c.id);
+    batch.set(ref, {
+      sharesAtTime: m.sharesCount,
+      amountDue: newDue
+    }, {merge:true});
+    updated++;
+  }
+  if(updated>0) await batch.commit();
+  return updated;
+}
+
 async function renderContributions(){
   const container = document.getElementById('viewShares');
   const now = new Date();
@@ -68,9 +95,19 @@ async function renderContributions(){
       <h3>Monthly Share Collection</h3>
       <label>Month</label>
       <input id="collectMonth" type="month" value="${defaultMonth}">
-      <button class="btn block" style="margin-top:12px;" onclick="loadContributionMonth()">Load / Generate Dues</button>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn block" onclick="loadContributionMonth()">Load / Generate Dues</button>
+        <button class="btn secondary block" onclick="handleSyncDues()">Sync Dues</button>
+      </div>
     </div>
     <div id="contribList"></div>`;
+  loadContributionMonth();
+}
+
+async function handleSyncDues(){
+  const mKey = document.getElementById('collectMonth').value || monthKey(new Date());
+  const updated = await syncDuesForMonth(mKey);
+  toast(updated > 0 ? `Synced dues for ${updated} member(s).` : 'All dues already up to date.');
   loadContributionMonth();
 }
 
