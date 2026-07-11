@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kks-society-v1';
+const CACHE_NAME = 'kks-society-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -32,13 +32,21 @@ self.addEventListener('activate', (e)=>{
   self.clients.claim();
 });
 
-// Network-first for Firebase/API calls, cache-first for app shell
+// Network-first for everything in our own app (always get the latest
+// code/config); fall back to cache only when offline. Firestore/Auth
+// calls are left alone entirely.
 self.addEventListener('fetch', (e)=>{
   const url = e.request.url;
   if(url.includes('firestore.googleapis.com') || url.includes('identitytoolkit')){
     return; // let these go straight to network
   }
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    fetch(e.request)
+      .then(res => {
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(e.request, copy));
+        return res;
+      })
+      .catch(() => caches.match(e.request))
   );
 });
