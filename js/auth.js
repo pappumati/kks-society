@@ -46,7 +46,7 @@ function renderLogin(){
   document.getElementById('app').innerHTML = `
     <div class="page" style="padding-top:14vh; max-width:380px;">
       <div style="text-align:center; margin-bottom:26px;">
-        <div class="stamp" style="width:60px;height:60px;font-size:22px;border-color:var(--primary);color:var(--primary);margin:0 auto 12px;">SS</div>
+        <div class="stamp" style="width:60px;height:60px;font-size:22px;border-color:var(--primary);color:var(--primary);margin:0 auto 12px;">KK</div>
         <h1 class="display" style="font-size:24px;">KK's Society</h1>
         <div style="color:var(--ink-soft); font-size:13px; margin-top:2px;">Society Ledger &amp; Loan Register</div>
       </div>
