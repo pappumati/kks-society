@@ -88,8 +88,39 @@ async function submitMemberForm(id){
 
 async function openMemberDetail(id){
   const m = await getMember(id);
+  const yearId = societyYearOf(new Date());
+  const months = societyYearMonths(yearId);
+
+  // Pull this member's contribution doc for every month of the current
+  // society year directly by id (fast — no collection query needed).
+  const contribDocs = await Promise.all(
+    months.map(mk => db.collection('contributions').doc(`${id}_${mk}`).get())
+  );
+  const contribByMonth = {};
+  contribDocs.forEach((d,i) => { if(d.exists) contribByMonth[months[i]] = d.data(); });
+
+  const totalDueFY = months.reduce((s,mk)=> s + (contribByMonth[mk]
+    ? contribByMonth[mk].amountDue + (contribByMonth[mk].penaltyAmount||0) : 0), 0);
+  const totalPaidFY = months.reduce((s,mk)=> s + (contribByMonth[mk]?.amountPaid||0), 0);
+
+  // Loans + full ledger history for this member, restricted to this FY.
   const loans = await getMemberLoans(id);
+  let loanRows = '';
+  let totalInterestFY = 0;
+  for(const l of loans){
+    const ledger = (await getLoanLedger(l.id)).filter(e => e.yearId === yearId);
+    if(ledger.length === 0) continue;
+    totalInterestFY += ledger.reduce((s,e)=> s + (e.interest||0), 0);
+    loanRows += `
+      <div class="meta" style="margin-top:8px;"><b>Loan — Principal ${fmtMoney(l.principal)}</b> (issued ${l.dateIssued}, ${l.status})</div>
+      ${ledger.map(e=>`
+        <div class="row" style="padding:6px 0;">
+          <div class="meta">${monthLabel(e.month)} · opening ${fmtMoney(e.openingBalance)} + ${SOCIETY.monthlyInterestPct}% interest ${fmtMoney(e.interest)}</div>
+          <div class="meta">${e.status==='paid' ? 'closed' : fmtMoney(e.closingBalance)+' due'}</div>
+        </div>`).join('')}`;
+  }
   const activeLoan = loans.find(l=>l.status==='active');
+
   openModal(`
     <div class="modal-head"><h3>${escapeHtml(m.name)}</h3><button class="close" onclick="closeModal()">✕</button></div>
     <div class="grid-2">
@@ -98,10 +129,29 @@ async function openMemberDetail(id){
     </div>
     <div class="section-title">Contact</div>
     <div class="meta">${escapeHtml(m.phone||'No phone on file')} · Joined ${m.joinDate||'—'}</div>
-    <div class="section-title">Loan Status</div>
-    ${activeLoan
-      ? `<div class="meta">Active loan — outstanding <b class="amount">${fmtMoney(activeLoan.currentOutstanding)}</b></div>`
-      : `<div class="meta">No active loan.</div>`}
+
+    <div class="section-title" style="margin-top:14px;">Contribution History — FY ${yearId}</div>
+    <div class="meta" style="margin-bottom:6px;">Total this FY: paid ${fmtMoney(totalPaidFY)} of ${fmtMoney(totalDueFY)} due</div>
+    <div class="card ledger" style="padding:6px 10px;">
+      ${months.map(mk=>{
+        const c = contribByMonth[mk];
+        if(!c) return `<div class="row" style="padding:6px 0;"><div class="meta">${monthLabel(mk)}</div><div class="meta">— not generated —</div></div>`;
+        const due = c.amountDue + (c.penaltyAmount||0);
+        return `<div class="row" style="padding:6px 0;">
+          <div class="meta">${monthLabel(mk)} · Due ${fmtMoney(due)}</div>
+          <div style="text-align:right;">
+            <span class="pill ${c.status==='paid'?'paid':(c.status==='partial'?'pending':'due')}">${c.status}</span>
+            <div class="meta">Paid ${fmtMoney(c.amountPaid||0)}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+
+    <div class="section-title" style="margin-top:14px;">Loan History — FY ${yearId}</div>
+    ${activeLoan ? `<div class="meta">Currently active loan — outstanding <b class="amount">${fmtMoney(activeLoan.outstandingBalance)}</b></div>` : `<div class="meta">No active loan.</div>`}
+    <div class="meta" style="margin-top:4px;">Total interest charged this FY: <b>${fmtMoney(totalInterestFY)}</b></div>
+    ${loanRows || '<div class="meta">No loan activity this FY.</div>'}
+
     <div style="display:flex; gap:10px; margin-top:16px;">
       <button class="btn secondary block" onclick='openMemberForm(${JSON.stringify(m)})'>Edit</button>
       <button class="btn ${m.active===false?'':'danger'} block" onclick="toggleMemberActive('${m.id}', ${m.active===false})">${m.active===false?'Reactivate':'Deactivate'}</button>
