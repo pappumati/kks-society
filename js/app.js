@@ -15,7 +15,7 @@ const TABS = [
 function startApp(){
   document.getElementById('app').innerHTML = `
     <div class="topbar">
-      <div class="stamp">SS</div>
+      <div class="stamp">KK</div>
       <div class="titles">
         <div class="display" style="font-size:16.5px;">KK's Society</div>
         <small>${escapeHtml(currentProfile?.username || '')}</small>
