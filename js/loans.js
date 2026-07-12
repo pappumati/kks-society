@@ -51,11 +51,33 @@ async function processLoanMonth(loanId, mKey){
     loanId, memberId: loan.memberId, memberName: loan.memberName,
     month: mKey, yearId: societyYearOf(mKey + "-05"),
     openingBalance: opening, interest, totalDue,
-    paymentMade: 0, closingBalance: totalDue, status: 'carried',
+    paymentMade: 0, topupAmount: 0, closingBalance: totalDue, status: 'carried',
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
   });
   await loanRef.set({outstandingBalance: totalDue, lastProcessedMonth: mKey}, {merge:true});
   return ref.id;
+}
+
+// Adds extra loan amount ("top-up") to an existing loan within a given
+// month, instead of creating a brand new loan record. This keeps one
+// continuous running balance per member, matching the register-style
+// ledger (Month / Loan Balance / Interest / Repayment / Loan Taken).
+async function addLoanTopup(loanId, mKey, amount){
+  await processLoanMonth(loanId, mKey); // ensure this month's row exists
+  const snap = await db.collection('loanLedger')
+    .where('loanId','==',loanId).where('month','==',mKey).limit(1).get();
+  if(snap.empty) return;
+  const entryRef = snap.docs[0].ref;
+  const entry = snap.docs[0].data();
+  const newClosing = Math.round((entry.closingBalance + amount) * 100) / 100;
+  await entryRef.set({
+    topupAmount: (entry.topupAmount||0) + amount,
+    closingBalance: newClosing,
+    status: 'carried'
+  }, {merge:true});
+  await db.collection('loans').doc(loanId).set({
+    outstandingBalance: newClosing, status: 'active'
+  }, {merge:true});
 }
 
 async function processAllLoansForMonth(mKey){
@@ -93,17 +115,12 @@ async function updateLoanDetails(loanId, principal, dateIssued){
   const yearId = societyYearOf(dateIssued);
   const ledger = await getLoanLedger(loanId);
   const update = {principal, dateIssued, yearId};
-  // Only safe to also reset the outstanding balance if interest hasn't
-  // been processed yet — otherwise the ledger's own running balance
-  // (not the original principal) is what's actually owed.
   if(ledger.length === 0){
     update.outstandingBalance = principal;
   }
   await loanRef.set(update, {merge:true});
 }
 
-// Undo a recorded loan payment on one ledger entry (e.g. wrong amount
-// entered) by resetting that month's payment back to zero.
 async function undoLoanPayment(ledgerId){
   const ref = db.collection('loanLedger').doc(ledgerId);
   const entry = (await ref.get()).data();
@@ -196,6 +213,7 @@ async function openLoanDetail(loanId){
         <div>
           <div class="who">${monthLabel(e.month)}</div>
           <div class="meta">Opening ${fmtMoney(e.openingBalance)} + ${SOCIETY.monthlyInterestPct}% (${fmtMoney(e.interest)})</div>
+          ${e.topupAmount ? `<div class="meta">+ ${fmtMoney(e.topupAmount)} top-up this month</div>` : ''}
         </div>
         <div style="text-align:right;">
           <div class="amount">${fmtMoney(e.closingBalance)}</div>
@@ -206,9 +224,30 @@ async function openLoanDetail(loanId){
       </div>`).join('') || '<div class="meta">No monthly entries yet — run interest processing from the Loans tab.</div>'}
     <div style="display:flex; gap:10px; margin-top:16px;">
       <button class="btn secondary block" onclick='openEditLoanForm(${JSON.stringify({id:loan.id, principal:loan.principal, dateIssued:loan.dateIssued, memberName:loan.memberName})}, ${ledger.length})'>Edit</button>
-      <button class="btn block" style="background:transparent; color:var(--debit); border:1.5px solid var(--debit);" onclick="openDeleteLoanConfirm('${loan.id}', '${escapeHtml(loan.memberName)}')">Delete Loan</button>
+      ${loan.status==='active' ? `<button class="btn block" onclick="promptLoanTopup('${loan.id}')">+ Top-up</button>` : ''}
     </div>
+    <button class="btn block" style="margin-top:10px; background:transparent; color:var(--debit); border:1.5px solid var(--debit);" onclick="openDeleteLoanConfirm('${loan.id}', '${escapeHtml(loan.memberName)}')">Delete Loan</button>
   `);
+}
+
+function promptLoanTopup(loanId){
+  openModal(`
+    <div class="modal-head"><h3>Top-up Loan</h3><button class="close" onclick="closeModal()">✕</button></div>
+    <label>Additional Amount</label>
+    <input id="topupAmt" type="number" min="1">
+    <label>Month</label>
+    <input id="topupMonth" type="month" value="${monthKey(new Date())}">
+    <button class="btn block" style="margin-top:14px;" onclick="submitLoanTopup('${loanId}')">Add Top-up</button>
+  `);
+}
+async function submitLoanTopup(loanId){
+  const amt = parseFloat(document.getElementById('topupAmt').value || '0');
+  const mKey = document.getElementById('topupMonth').value;
+  if(amt <= 0){ toast('Enter a valid amount.'); return; }
+  await addLoanTopup(loanId, mKey, amt);
+  toast('Top-up added.');
+  openLoanDetail(loanId);
+  renderDashboard();
 }
 
 function openEditLoanForm(loan, ledgerCount){
