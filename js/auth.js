@@ -9,36 +9,39 @@ let currentProfile = null; // { username, role, isDefaultAdmin }
 const DEFAULT_ADMIN = { username: "admin", password: "admin123" };
 
 async function ensureDefaultAdminExists(){
-  // We can't read Firestore before anyone is logged in (rules require
-  // auth), so instead of checking a document, we just try signing in
-  // as the default admin. If that succeeds, it already exists — sign
-  // back out and stop. If it fails because the account doesn't exist,
-  // create it.
+  // Run this entirely on a throwaway secondary Firebase app instance so
+  // it can never sign out (or otherwise disturb) whoever is actually
+  // logged in on the main `auth` object.
+  const secondary = firebase.initializeApp(firebaseConfig, "seedcheck-" + Date.now());
   try{
-    await auth.signInWithEmailAndPassword(
-      usernameToEmail(DEFAULT_ADMIN.username), DEFAULT_ADMIN.password);
-    await auth.signOut();
-    return;
-  }catch(e){
-    // auth/user-not-found (or invalid-credential on newer SDKs) means
-    // it genuinely doesn't exist yet — fall through and create it.
-    // Any other error (e.g. wrong-password because someone already
-    // changed it) — just stop; createUser below will harmlessly fail
-    // with email-already-in-use in that case anyway.
-  }
+    try{
+      await secondary.auth().signInWithEmailAndPassword(
+        usernameToEmail(DEFAULT_ADMIN.username), DEFAULT_ADMIN.password);
+      // Exists and default password still works — nothing to do.
+      return;
+    }catch(e){
+      // auth/user-not-found means it genuinely doesn't exist yet —
+      // fall through and create it. Any other error (e.g. someone
+      // already changed the password) — just stop; we don't want to
+      // touch an existing account.
+      if(e.code !== 'auth/user-not-found' && e.code !== 'auth/invalid-credential') return;
+    }
 
-  try{
-    await auth.createUserWithEmailAndPassword(
-      usernameToEmail(DEFAULT_ADMIN.username), DEFAULT_ADMIN.password);
-    await db.collection('users').doc('admin').set({
-      username: DEFAULT_ADMIN.username,
-      role: 'admin',
-      isDefaultAdmin: true,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    await auth.signOut();
-  }catch(e){
-    console.warn("Default admin seed:", e.message);
+    try{
+      const cred = await secondary.auth().createUserWithEmailAndPassword(
+        usernameToEmail(DEFAULT_ADMIN.username), DEFAULT_ADMIN.password);
+      await db.collection('users').doc('admin').set({
+        username: DEFAULT_ADMIN.username,
+        uid: cred.user.uid,
+        role: 'admin',
+        isDefaultAdmin: true,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }catch(e){
+      console.warn("Default admin seed:", e.message);
+    }
+  } finally {
+    await secondary.delete();
   }
 }
 
