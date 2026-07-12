@@ -280,3 +280,15 @@ label{ font-size:12.5px; color:var(--ink-soft); display:block; margin:10px 0 4px
 .hidden{ display:none !important; }
 .section-title{ font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); margin:18px 0 8px; }
 .divider{ height:1px; background:var(--rule); margin:14px 0; }
+/* ---------- Detail-view tables (member history, etc.) ---------- */
+.detail-table-wrap{ overflow-x:auto; margin-bottom:14px; -webkit-overflow-scrolling:touch; }
+table.detail-table{ width:100%; border-collapse:collapse; font-size:12.5px; white-space:nowrap; }
+table.detail-table th, table.detail-table td{
+  padding:7px 9px; text-align:left; border-bottom:1px solid rgba(0,0,0,0.08);
+}
+table.detail-table th{
+  font-size:10.5px; text-transform:uppercase; letter-spacing:0.03em;
+  color:var(--ink-soft); font-weight:600; background:rgba(0,0,0,0.03);
+}
+table.detail-table td.num{ text-align:right; font-variant-numeric:tabular-nums; }
+table.detail-table tr:last-child td{ border-bottom:none; }
