@@ -103,7 +103,7 @@ body{
   color:var(--ink);
   font-family:var(--font-body);
   -webkit-font-smoothing:antialiased;
-  padding-bottom:104px; /* space for bottom nav */
+  padding-bottom:140px; /* space for bottom nav */
 }
 
 h1,h2,h3,.display{
