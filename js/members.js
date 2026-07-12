@@ -91,8 +91,6 @@ async function openMemberDetail(id){
   const yearId = societyYearOf(new Date());
   const months = societyYearMonths(yearId);
 
-  // Pull this member's contribution doc for every month of the current
-  // society year directly by id (fast — no collection query needed).
   const contribDocs = await Promise.all(
     months.map(mk => db.collection('contributions').doc(`${id}_${mk}`).get())
   );
@@ -103,23 +101,44 @@ async function openMemberDetail(id){
     ? contribByMonth[mk].amountDue + (contribByMonth[mk].penaltyAmount||0) : 0), 0);
   const totalPaidFY = months.reduce((s,mk)=> s + (contribByMonth[mk]?.amountPaid||0), 0);
 
-  // Loans + full ledger history for this member, restricted to this FY.
   const loans = await getMemberLoans(id);
-  let loanRows = '';
+  const monthAgg = {};
   let totalInterestFY = 0;
   for(const l of loans){
     const ledger = (await getLoanLedger(l.id)).filter(e => e.yearId === yearId);
-    if(ledger.length === 0) continue;
-    totalInterestFY += ledger.reduce((s,e)=> s + (e.interest||0), 0);
-    loanRows += `
-      <div class="meta" style="margin-top:8px;"><b>Loan — Principal ${fmtMoney(l.principal)}</b> (issued ${l.dateIssued}, ${l.status})</div>
-      ${ledger.map(e=>`
-        <div class="row" style="padding:6px 0;">
-          <div class="meta">${monthLabel(e.month)} · opening ${fmtMoney(e.openingBalance)} + ${SOCIETY.monthlyInterestPct}% interest ${fmtMoney(e.interest)}</div>
-          <div class="meta">${e.status==='paid' ? 'closed' : fmtMoney(e.closingBalance)+' due'}</div>
-        </div>`).join('')}`;
+    for(const e of ledger){
+      if(!monthAgg[e.month]) monthAgg[e.month] = {opening:0, interest:0, payment:0, topup:0, closing:0};
+      const a = monthAgg[e.month];
+      a.opening += e.openingBalance || 0;
+      a.interest += e.interest || 0;
+      a.payment += e.paymentMade || 0;
+      a.topup += e.topupAmount || 0;
+      a.closing += e.closingBalance || 0;
+      totalInterestFY += e.interest || 0;
+    }
   }
   const activeLoan = loans.find(l=>l.status==='active');
+  const loanTable = `
+    <div class="detail-table-wrap">
+      <table class="detail-table">
+        <thead><tr><th>Month</th><th>Share Paid</th><th>Loan Bal.</th><th>Interest</th><th>Repayment</th><th>Loan Taken</th></tr></thead>
+        <tbody>
+          ${months.map(mk=>{
+            const a = monthAgg[mk];
+            const paidDate = contribByMonth[mk]?.paidDate || '—';
+            if(!a) return `<tr><td>${monthLabel(mk)}</td><td>${paidDate}</td><td class="num" colspan="4">—</td></tr>`;
+            return `<tr>
+              <td>${monthLabel(mk)}</td>
+              <td>${paidDate}</td>
+              <td class="num">${fmtMoney(a.opening)}</td>
+              <td class="num">${fmtMoney(a.interest)}</td>
+              <td class="num">${fmtMoney(a.payment)}</td>
+              <td class="num">${a.topup ? fmtMoney(a.topup) : '0'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 
   openModal(`
     <div class="modal-head"><h3>${escapeHtml(m.name)}</h3><button class="close" onclick="closeModal()">✕</button></div>
@@ -132,25 +151,29 @@ async function openMemberDetail(id){
 
     <div class="section-title" style="margin-top:14px;">Contribution History — FY ${yearId}</div>
     <div class="meta" style="margin-bottom:6px;">Total this FY: paid ${fmtMoney(totalPaidFY)} of ${fmtMoney(totalDueFY)} due</div>
-    <div class="card ledger" style="padding:6px 10px;">
-      ${months.map(mk=>{
-        const c = contribByMonth[mk];
-        if(!c) return `<div class="row" style="padding:6px 0;"><div class="meta">${monthLabel(mk)}</div><div class="meta">— not generated —</div></div>`;
-        const due = c.amountDue + (c.penaltyAmount||0);
-        return `<div class="row" style="padding:6px 0;">
-          <div class="meta">${monthLabel(mk)} · Due ${fmtMoney(due)}</div>
-          <div style="text-align:right;">
-            <span class="pill ${c.status==='paid'?'paid':(c.status==='partial'?'pending':'due')}">${c.status}</span>
-            <div class="meta">Paid ${fmtMoney(c.amountPaid||0)}</div>
-          </div>
-        </div>`;
-      }).join('')}
+    <div class="detail-table-wrap">
+      <table class="detail-table">
+        <thead><tr><th>Month</th><th>Due</th><th>Paid</th><th>Status</th></tr></thead>
+        <tbody>
+          ${months.map(mk=>{
+            const c = contribByMonth[mk];
+            if(!c) return `<tr><td>${monthLabel(mk)}</td><td class="num" colspan="3">— not generated —</td></tr>`;
+            const due = c.amountDue + (c.penaltyAmount||0);
+            return `<tr>
+              <td>${monthLabel(mk)}</td>
+              <td class="num">${fmtMoney(due)}</td>
+              <td class="num">${fmtMoney(c.amountPaid||0)}</td>
+              <td><span class="pill ${c.status==='paid'?'paid':(c.status==='partial'?'pending':'due')}">${c.status}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
     </div>
 
     <div class="section-title" style="margin-top:14px;">Loan History — FY ${yearId}</div>
     ${activeLoan ? `<div class="meta">Currently active loan — outstanding <b class="amount">${fmtMoney(activeLoan.outstandingBalance)}</b></div>` : `<div class="meta">No active loan.</div>`}
-    <div class="meta" style="margin-top:4px;">Total interest charged this FY: <b>${fmtMoney(totalInterestFY)}</b></div>
-    ${loanRows || '<div class="meta">No loan activity this FY.</div>'}
+    <div class="meta" style="margin-top:4px; margin-bottom:6px;">Total interest charged this FY: <b>${fmtMoney(totalInterestFY)}</b></div>
+    ${loanTable}
 
     <div style="display:flex; gap:10px; margin-top:16px;">
       <button class="btn secondary block" onclick='openMemberForm(${JSON.stringify(m)})'>Edit</button>
