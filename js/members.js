@@ -87,6 +87,7 @@ async function submitMemberForm(id){
 }
 
 async function openCollectPayment(id){
+ try {
   const m = await getMember(id);
   const mKey = monthKey(new Date());
 
@@ -123,9 +124,14 @@ async function openCollectPayment(id){
 
     <button class="btn block" style="margin-top:16px;" onclick="submitCollectPayment('${id}', '${contrib?contrib.id:''}', '${loanEntry?loanEntry.id:''}')">Confirm Payment</button>
   `);
+ } catch(err) {
+   console.error('openCollectPayment failed:', err);
+   toast('Error opening Collect Payment: ' + (err.message || err));
+ }
 }
 
 async function submitCollectPayment(memberId, contribId, loanEntryId){
+ try {
   const shareInput = document.getElementById('cpShareAmt');
   const loanInput = document.getElementById('cpLoanAmt');
   const shareAmt = shareInput ? parseFloat(shareInput.value || '0') : 0;
@@ -147,6 +153,10 @@ async function submitCollectPayment(memberId, contribId, loanEntryId){
   renderDashboard();
   if(document.getElementById('viewMembers').style.display !== 'none') renderMembers();
   if(document.getElementById('viewShares') && document.getElementById('viewShares').style.display !== 'none') loadContributionMonth();
+ } catch(err) {
+   console.error('submitCollectPayment failed:', err);
+   toast('Error recording payment: ' + (err.message || err));
+ }
 }
 
 async function openMemberDetail(id){
