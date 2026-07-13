@@ -20,6 +20,7 @@ function startApp(){
         <div class="display" style="font-size:16.5px;">KK's Society</div>
         <small>${escapeHtml(currentProfile?.username || '')}</small>
       </div>
+      <button class="hamburger" onclick="openDrawer()">☰</button>
     </div>
 
     <div id="viewDashboard" class="page"></div>
@@ -31,11 +32,21 @@ function startApp(){
     <div id="viewYearEnd" class="page hidden"></div>
     <div id="viewSettings" class="page hidden"></div>
 
-    <div class="bottomnav">
-      ${TABS.map(t=>`
-        <button class="navbtn ${t.id==='dashboard'?'active':''}" id="nav-${t.id}" onclick="switchTab('${t.id}')">
-          <span style="font-size:17px;">${t.icon}</span>${t.label}
-        </button>`).join('')}
+    <div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawer()"></div>
+    <div class="drawer" id="drawer">
+      <div class="drawer-head">
+        <div class="stamp" style="border-color:var(--primary-contrast);">KK</div>
+        <div class="titles">
+          <div class="display" style="font-size:15px;">KK's Society</div>
+          <small>${escapeHtml(currentProfile?.username || '')}</small>
+        </div>
+      </div>
+      <div class="drawer-nav">
+        ${TABS.map(t=>`
+          <button class="navbtn ${t.id==='dashboard'?'active':''}" id="nav-${t.id}" onclick="switchTab('${t.id}')">
+            <span class="navicon">${t.icon}</span>${t.label}
+          </button>`).join('')}
+      </div>
     </div>
 
     <div class="modal-backdrop" id="modalBackdrop" onclick="if(event.target===this) closeModal()">
@@ -44,6 +55,15 @@ function startApp(){
     <div id="toast"></div>
   `;
   renderDashboard();
+}
+
+function openDrawer(){
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawerBackdrop').classList.add('open');
+}
+function closeDrawer(){
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawerBackdrop').classList.remove('open');
 }
 
 const VIEW_ID = {
@@ -63,6 +83,8 @@ function switchTab(tabId){
     document.getElementById('nav-'+t.id).classList.toggle('active', t.id===tabId);
   });
   RENDER_FN[tabId]();
+  closeDrawer();
+  window.scrollTo(0,0);
 }
 
 // ---------- boot ----------
