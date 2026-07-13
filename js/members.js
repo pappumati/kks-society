@@ -41,14 +41,14 @@ async function renderMembers(){
     </div>
     <div class="card ledger">
       ${members.map(m=>`
-        <div class="row" onclick="openMemberDetail('${m.id}')" style="cursor:pointer;">
-          <div>
+        <div class="row" style="cursor:pointer;">
+          <div onclick="openMemberDetail('${m.id}')" style="flex:1;">
             <div class="who">${escapeHtml(m.name)}</div>
             <div class="meta">${m.sharesCount||0} shares · ${escapeHtml(m.phone||'—')}</div>
           </div>
           <div style="text-align:right;">
             <div class="amount">${fmtMoney((m.sharesCount||0)*SOCIETY.shareValue)}<span style="color:var(--ink-soft);font-size:11px;">/mo</span></div>
-            ${m.active===false ? '<span class="pill due">Inactive</span>' : ''}
+            ${m.active===false ? '<span class="pill due">Inactive</span>' : `<button class="btn secondary" style="padding:5px 10px;font-size:12px;margin-top:4px;" onclick="event.stopPropagation(); openCollectPayment('${m.id}')">Collect</button>`}
           </div>
         </div>`).join('') || '<div class="meta">No members yet. Tap + Add to register the first member.</div>'}
     </div>`;
@@ -86,6 +86,69 @@ async function submitMemberForm(id){
   renderDashboard();
 }
 
+async function openCollectPayment(id){
+  const m = await getMember(id);
+  const mKey = monthKey(new Date());
+
+  // Make sure this month's share due exists.
+  await ensureMonthContributions(mKey);
+  const contribDoc = await db.collection('contributions').doc(`${id}_${mKey}`).get();
+  const contrib = contribDoc.exists ? {id: contribDoc.id, ...contribDoc.data()} : null;
+  const shareDue = contrib ? Math.max(contrib.amountDue + (contrib.penaltyAmount||0) - (contrib.amountPaid||0), 0) : 0;
+
+  // Make sure this month's loan interest entry exists (if they have an active loan).
+  const loans = await getMemberLoans(id);
+  const activeLoan = loans.find(l=>l.status==='active');
+  let loanEntry = null;
+  if(activeLoan){
+    await ensureLoanCaughtUp(activeLoan.id);
+    const ledger = await getLoanLedger(activeLoan.id);
+    loanEntry = ledger.find(e => e.month === mKey) || null;
+  }
+  const loanDue = loanEntry ? Math.max(loanEntry.totalDue - (loanEntry.paymentMade||0), 0) : 0;
+
+  openModal(`
+    <div class="modal-head"><h3>Collect Payment — ${escapeHtml(m.name)}</h3><button class="close" onclick="closeModal()">✕</button></div>
+    <div class="meta" style="margin-bottom:10px;">${monthLabel(mKey)}</div>
+
+    ${contrib ? `
+      <label>Share Amount (due ${fmtMoney(shareDue)})</label>
+      <input id="cpShareAmt" type="number" value="${shareDue}">
+    ` : `<div class="meta">No share due generated for this month yet.</div>`}
+
+    ${activeLoan ? `
+      <label style="margin-top:12px;">Loan Amount (due ${fmtMoney(loanDue)})</label>
+      <input id="cpLoanAmt" type="number" value="${loanDue}">
+    ` : `<div class="meta" style="margin-top:12px;">No active loan for this member.</div>`}
+
+    <button class="btn block" style="margin-top:16px;" onclick="submitCollectPayment('${id}', '${contrib?contrib.id:''}', '${loanEntry?loanEntry.id:''}')">Confirm Payment</button>
+  `);
+}
+
+async function submitCollectPayment(memberId, contribId, loanEntryId){
+  const shareInput = document.getElementById('cpShareAmt');
+  const loanInput = document.getElementById('cpLoanAmt');
+  const shareAmt = shareInput ? parseFloat(shareInput.value || '0') : 0;
+  const loanAmt = loanInput ? parseFloat(loanInput.value || '0') : 0;
+
+  if(contribId && shareAmt > 0){
+    await markContributionPaid(contribId, shareAmt);
+  }
+  if(loanEntryId && loanAmt > 0){
+    await recordLoanPayment(loanEntryId, loanAmt);
+  }
+
+  closeModal();
+  const parts = [];
+  if(shareAmt > 0) parts.push(`share ${fmtMoney(shareAmt)}`);
+  if(loanAmt > 0) parts.push(`loan ${fmtMoney(loanAmt)}`);
+  toast(parts.length ? `Recorded: ${parts.join(' + ')}.` : 'Nothing entered — no payment recorded.');
+
+  renderDashboard();
+  if(document.getElementById('viewMembers').style.display !== 'none') renderMembers();
+  if(document.getElementById('viewShares') && document.getElementById('viewShares').style.display !== 'none') loadContributionMonth();
+}
+
 async function openMemberDetail(id){
   const m = await getMember(id);
   const yearId = societyYearOf(new Date());
@@ -102,6 +165,7 @@ async function openMemberDetail(id){
   const totalPaidFY = months.reduce((s,mk)=> s + (contribByMonth[mk]?.amountPaid||0), 0);
 
   const loans = await getMemberLoans(id);
+  for(const l of loans) await ensureLoanCaughtUp(l.id);
   const monthAgg = {};
   let totalInterestFY = 0;
   for(const l of loans){
@@ -118,6 +182,11 @@ async function openMemberDetail(id){
     }
   }
   const activeLoan = loans.find(l=>l.status==='active');
+  let currentLoanEntry = null;
+  if(activeLoan){
+    const activeLedger = await getLoanLedger(activeLoan.id);
+    currentLoanEntry = activeLedger.find(e => e.month === monthKey(new Date()));
+  }
   const loanTable = `
     <div class="detail-table-wrap">
       <table class="detail-table">
@@ -148,6 +217,7 @@ async function openMemberDetail(id){
     </div>
     <div class="section-title">Contact</div>
     <div class="meta">${escapeHtml(m.phone||'No phone on file')} · Joined ${m.joinDate||'—'}</div>
+    <button class="btn block" style="margin-top:12px;" onclick="openCollectPayment('${m.id}')">Collect Payment (Share + Loan)</button>
 
     <div class="section-title" style="margin-top:14px;">Contribution History — FY ${yearId}</div>
     <div class="meta" style="margin-bottom:6px;">Total this FY: paid ${fmtMoney(totalPaidFY)} of ${fmtMoney(totalDueFY)} due</div>
@@ -174,6 +244,10 @@ async function openMemberDetail(id){
     ${activeLoan ? `<div class="meta">Currently active loan — outstanding <b class="amount">${fmtMoney(activeLoan.outstandingBalance)}</b></div>` : `<div class="meta">No active loan.</div>`}
     <div class="meta" style="margin-top:4px; margin-bottom:6px;">Total interest charged this FY: <b>${fmtMoney(totalInterestFY)}</b></div>
     ${loanTable}
+    ${currentLoanEntry && currentLoanEntry.status!=='paid' ? `
+      <button class="btn block" style="margin-top:10px;" onclick="promptLoanPayment('${currentLoanEntry.id}', ${currentLoanEntry.totalDue - currentLoanEntry.paymentMade})">Record Loan Payment (${monthLabel(currentLoanEntry.month)})</button>
+    ` : ''}
+    ${activeLoan ? `<button class="btn secondary block" style="margin-top:8px;" onclick="promptLoanTopup('${activeLoan.id}')">+ Top-up Loan</button>` : ''}
 
     <div style="display:flex; gap:10px; margin-top:16px;">
       <button class="btn secondary block" onclick='openMemberForm(${JSON.stringify(m)})'>Edit</button>
