@@ -86,6 +86,28 @@ async function processAllLoansForMonth(mKey){
   return loans.length;
 }
 
+// Automatically back-fills every missing month's interest entry for a
+// loan, from the month it was issued up through the current month —
+// so nobody has to remember to tap "Run" each month. Safe to call
+// repeatedly; processLoanMonth() itself skips months already done.
+async function ensureLoanCaughtUp(loanId){
+  const doc = await db.collection('loans').doc(loanId).get();
+  if(!doc.exists) return;
+  const loan = doc.data();
+  if(loan.status !== 'active') return;
+  const startMonth = (loan.dateIssued || '').slice(0,7);
+  const endMonth = monthKey(new Date());
+  if(!startMonth) return;
+  for(const mk of monthsBetween(startMonth, endMonth)){
+    await processLoanMonth(loanId, mk);
+  }
+}
+
+async function ensureAllLoansCaughtUp(){
+  const loans = await getActiveLoans();
+  for(const l of loans) await ensureLoanCaughtUp(l.id);
+}
+
 async function recordLoanPayment(ledgerId, paymentAmount){
   const ref = db.collection('loanLedger').doc(ledgerId);
   const entry = (await ref.get()).data();
@@ -129,6 +151,7 @@ async function undoLoanPayment(ledgerId){
 }
 
 async function renderLoans(){
+  await ensureAllLoansCaughtUp();
   const active = await getActiveLoans();
   const totalOutstanding = active.reduce((s,l)=>s+(l.outstandingBalance||0),0);
   const container = document.getElementById('viewLoans');
@@ -197,6 +220,7 @@ async function submitIssueLoan(){
 }
 
 async function openLoanDetail(loanId){
+  await ensureLoanCaughtUp(loanId);
   const loanDoc = await db.collection('loans').doc(loanId).get();
   const loan = {id:loanDoc.id, ...loanDoc.data()};
   const ledger = await getLoanLedger(loanId);
