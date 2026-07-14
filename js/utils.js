@@ -34,6 +34,20 @@ function monthLabel(key){
   return `${EN_MONTHS[m]} ${y}`;
 }
 
+function monthsBetween(startKey, endKey){
+  const [sy, sm] = startKey.split('-').map(Number);
+  const [ey, em] = endKey.split('-').map(Number);
+  const months = [];
+  let y = sy, m = sm;
+  while(y < ey || (y === ey && m <= em)){
+    months.push(`${y}-${String(m).padStart(2,'0')}`);
+    m++;
+    if(m > 12){ m = 1; y++; }
+  }
+  return months;
+}
+
+
 // Given any date, return the society "society year" it falls in,
 // e.g. Nov 2025 -> "2025-2026" (Oct 2025 to Sep 2026)
 function societyYearOf(date){
