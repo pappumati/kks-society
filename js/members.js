@@ -215,7 +215,7 @@ async function openMemberDetail(id){
               <td class="num">${fmtMoney(a.opening)}</td>
               <td class="num">${fmtMoney(a.interest)}</td>
               <td class="num">${fmtMoney(a.payment)}</td>
-              <td class="num">${a.topup ? fmtMoney(a.topup) : '0'}</td>
+              <td class="num">${a.taken ? fmtMoney(a.taken) : '0'}</td>
             </tr>`;
           }).join('')}
         </tbody>
