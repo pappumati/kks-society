@@ -175,18 +175,21 @@ async function openMemberDetail(id){
   const totalPaidFY = months.reduce((s,mk)=> s + (contribByMonth[mk]?.amountPaid||0), 0);
 
   const loans = await getMemberLoans(id);
-  for(const l of loans) await ensureLoanCaughtUp(l.id);
-  const monthAgg = {};
-  let totalInterestFY = 0;
   for(const l of loans){
-    const ledger = (await getLoanLedger(l.id)).filter(e => e.yearId === yearId);
+    const fullLedger = await getLoanLedger(l.id); // full history, sorted by month asc
+    const issuanceMonth = fullLedger.length ? fullLedger[0].month : null;
+    const ledger = fullLedger.filter(e => e.yearId === yearId);
     for(const e of ledger){
-      if(!monthAgg[e.month]) monthAgg[e.month] = {opening:0, interest:0, payment:0, topup:0, closing:0};
+      if(!monthAgg[e.month]) monthAgg[e.month] = {opening:0, interest:0, payment:0, taken:0, closing:0};
       const a = monthAgg[e.month];
       a.opening += e.openingBalance || 0;
       a.interest += e.interest || 0;
       a.payment += e.paymentMade || 0;
-      a.topup += e.topupAmount || 0;
+      // "Loan Taken" = the original principal in the month it was first
+      // issued, PLUS any later top-up amount — i.e. money that actually
+      // left the society to the member that month, separate from the
+      // running balance/interest-basis shown in "Loan Bal."
+      a.taken += (e.month === issuanceMonth ? l.principal : 0) + (e.topupAmount || 0);
       a.closing += e.closingBalance || 0;
       totalInterestFY += e.interest || 0;
     }
