@@ -91,13 +91,11 @@ async function openCollectPayment(id){
   const m = await getMember(id);
   const mKey = monthKey(new Date());
 
-  // Make sure this month's share due exists.
   await ensureMonthContributions(mKey);
   const contribDoc = await db.collection('contributions').doc(`${id}_${mKey}`).get();
   const contrib = contribDoc.exists ? {id: contribDoc.id, ...contribDoc.data()} : null;
   const shareDue = contrib ? Math.max(contrib.amountDue + (contrib.penaltyAmount||0) - (contrib.amountPaid||0), 0) : 0;
 
-  // Make sure this month's loan interest entry exists (if they have an active loan).
   const loans = await getMemberLoans(id);
   const activeLoan = loans.find(l=>l.status==='active');
   let loanEntry = null;
@@ -160,6 +158,7 @@ async function submitCollectPayment(memberId, contribId, loanEntryId){
 }
 
 async function openMemberDetail(id){
+ try {
   const m = await getMember(id);
   const yearId = societyYearOf(new Date());
   const months = societyYearMonths(yearId);
@@ -175,8 +174,11 @@ async function openMemberDetail(id){
   const totalPaidFY = months.reduce((s,mk)=> s + (contribByMonth[mk]?.amountPaid||0), 0);
 
   const loans = await getMemberLoans(id);
+  for(const l of loans) await ensureLoanCaughtUp(l.id);
+  const monthAgg = {};
+  let totalInterestFY = 0;
   for(const l of loans){
-    const fullLedger = await getLoanLedger(l.id); // full history, sorted by month asc
+    const fullLedger = await getLoanLedger(l.id);
     const issuanceMonth = fullLedger.length ? fullLedger[0].month : null;
     const ledger = fullLedger.filter(e => e.yearId === yearId);
     for(const e of ledger){
@@ -185,10 +187,6 @@ async function openMemberDetail(id){
       a.opening += e.openingBalance || 0;
       a.interest += e.interest || 0;
       a.payment += e.paymentMade || 0;
-      // "Loan Taken" = the original principal in the month it was first
-      // issued, PLUS any later top-up amount — i.e. money that actually
-      // left the society to the member that month, separate from the
-      // running balance/interest-basis shown in "Loan Bal."
       a.taken += (e.month === issuanceMonth ? l.principal : 0) + (e.topupAmount || 0);
       a.closing += e.closingBalance || 0;
       totalInterestFY += e.interest || 0;
@@ -268,6 +266,10 @@ async function openMemberDetail(id){
     </div>
     <button class="btn danger block" style="margin-top:10px; background:transparent; color:var(--debit); border:1.5px solid var(--debit);" onclick="openDeleteMemberConfirm('${m.id}', '${escapeHtml(m.name)}')">Delete Member</button>
   `);
+ } catch(err) {
+   console.error('openMemberDetail failed:', err);
+   toast('Error opening member detail: ' + (err.message || err));
+ }
 }
 
 function openDeleteMemberConfirm(id, name){
