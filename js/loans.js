@@ -42,8 +42,13 @@ async function processLoanMonth(loanId, mKey){
     .where('loanId','==',loanId).where('month','==',mKey).limit(1).get();
   if(!existing.empty) return existing.docs[0].id;
 
-  const ledger = await getLoanLedger(loanId);
-  const opening = ledger.length ? ledger[ledger.length-1].closingBalance : loan.principal;
+  const ledger = await getLoanLedger(loanId); // sorted ascending by month
+  // Use the entry immediately BEFORE mKey chronologically — not just
+  // "whichever entry happens to be last in the list" — so processing
+  // months out of order (e.g. a top-up mistakenly dated earlier than
+  // an existing entry) can never scramble the running balance.
+  const prior = ledger.filter(e => e.month < mKey).pop();
+  const opening = prior ? prior.closingBalance : loan.principal;
   const interest = Math.round(opening * (SOCIETY.monthlyInterestPct/100) * 100) / 100;
   const totalDue = Math.round((opening + interest) * 100) / 100;
 
@@ -150,6 +155,21 @@ async function undoLoanPayment(ledgerId){
   await db.collection('loans').doc(entry.loanId).set({status:'active', outstandingBalance: entry.totalDue}, {merge:true});
 }
 
+// Removes one bad/duplicate monthly ledger entry (e.g. one created for
+// the wrong month) and recomputes the loan's outstandingBalance from
+// whatever entry is now the most recent one left.
+async function deleteLoanLedgerEntry(entryId, loanId){
+  if(!confirm('Delete this month\'s loan entry? This cannot be undone.')) return;
+  await db.collection('loanLedger').doc(entryId).delete();
+  const remaining = await getLoanLedger(loanId);
+  const newOutstanding = remaining.length ? remaining[remaining.length-1].closingBalance : (await db.collection('loans').doc(loanId).get()).data().principal;
+  await db.collection('loans').doc(loanId).set({
+    outstandingBalance: newOutstanding,
+    lastProcessedMonth: remaining.length ? remaining[remaining.length-1].month : null
+  }, {merge:true});
+  openLoanDetail(loanId);
+}
+
 async function renderLoans(){
   await ensureAllLoansCaughtUp();
   const active = await getActiveLoans();
@@ -162,13 +182,7 @@ async function renderLoans(){
         <button class="btn" onclick="openIssueLoanForm()">+ Issue Loan</button>
       </div>
       <div class="meta">Total outstanding across society: <b class="amount">${fmtMoney(totalOutstanding)}</b></div>
-    </div>
-    <div class="card">
-      <label>Apply this month's ${SOCIETY.monthlyInterestPct}% interest to all active loans</label>
-      <div style="display:flex; gap:8px;">
-        <input id="loanMonth" type="month" value="${monthKey(new Date())}">
-        <button class="btn secondary" onclick="runProcessMonth()">Run</button>
-      </div>
+      <div class="meta" style="margin-top:4px;">Monthly ${SOCIETY.monthlyInterestPct}% interest is applied automatically — no manual step needed.</div>
     </div>
     <div class="card ledger">
       ${active.map(l=>`
@@ -180,13 +194,6 @@ async function renderLoans(){
           <div class="amount debit">${fmtMoney(l.outstandingBalance)}</div>
         </div>`).join('') || '<div class="meta">No active loans.</div>'}
     </div>`;
-}
-
-async function runProcessMonth(){
-  const mKey = document.getElementById('loanMonth').value;
-  const n = await processAllLoansForMonth(mKey);
-  toast(`Interest applied to ${n} loan(s) for ${monthLabel(mKey)}.`);
-  renderLoans();
 }
 
 async function openIssueLoanForm(){
@@ -220,6 +227,7 @@ async function submitIssueLoan(){
 }
 
 async function openLoanDetail(loanId){
+ try {
   await ensureLoanCaughtUp(loanId);
   const loanDoc = await db.collection('loans').doc(loanId).get();
   const loan = {id:loanDoc.id, ...loanDoc.data()};
@@ -238,6 +246,7 @@ async function openLoanDetail(loanId){
           <div class="who">${monthLabel(e.month)}</div>
           <div class="meta">Opening ${fmtMoney(e.openingBalance)} + ${SOCIETY.monthlyInterestPct}% (${fmtMoney(e.interest)})</div>
           ${e.topupAmount ? `<div class="meta">+ ${fmtMoney(e.topupAmount)} top-up this month</div>` : ''}
+          <a href="javascript:void(0)" style="font-size:11.5px; color:#B33A3A;" onclick="deleteLoanLedgerEntry('${e.id}', '${loanId}')">Delete this entry</a>
         </div>
         <div style="text-align:right;">
           <div class="amount">${fmtMoney(e.closingBalance)}</div>
@@ -252,22 +261,30 @@ async function openLoanDetail(loanId){
     </div>
     <button class="btn block" style="margin-top:10px; background:transparent; color:var(--debit); border:1.5px solid var(--debit);" onclick="openDeleteLoanConfirm('${loan.id}', '${escapeHtml(loan.memberName)}')">Delete Loan</button>
   `);
+ } catch(err) {
+   console.error('openLoanDetail failed:', err);
+   toast('Error opening loan detail: ' + (err.message || err));
+ }
 }
 
 function promptLoanTopup(loanId){
+  const nowKey = monthKey(new Date());
   openModal(`
     <div class="modal-head"><h3>Top-up Loan</h3><button class="close" onclick="closeModal()">✕</button></div>
     <label>Additional Amount</label>
     <input id="topupAmt" type="number" min="1">
     <label>Month</label>
-    <input id="topupMonth" type="month" value="${monthKey(new Date())}">
+    <input id="topupMonth" type="month" value="${nowKey}" min="${nowKey}">
+    <div class="meta" style="margin-top:4px;">Top-ups can only be added for the current month or later — this keeps the running balance from getting scrambled.</div>
     <button class="btn block" style="margin-top:14px;" onclick="submitLoanTopup('${loanId}')">Add Top-up</button>
   `);
 }
 async function submitLoanTopup(loanId){
   const amt = parseFloat(document.getElementById('topupAmt').value || '0');
   const mKey = document.getElementById('topupMonth').value;
+  const nowKey = monthKey(new Date());
   if(amt <= 0){ toast('Enter a valid amount.'); return; }
+  if(mKey < nowKey){ toast('Top-up month cannot be earlier than the current month.'); return; }
   await addLoanTopup(loanId, mKey, amt);
   toast('Top-up added.');
   openLoanDetail(loanId);
