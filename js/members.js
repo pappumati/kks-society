@@ -251,7 +251,7 @@ async function openMemberDetail(id){
       </table>
     </div>
 
-    <div class="section-title" style="margin-top:14px;">Loan History — FY ${yearId}</div>
+   <div class="section-title" style="margin-top:14px;">Loan History — FY ${yearId}</div>
     ${activeLoan ? `<div class="meta">Currently active loan — outstanding <b class="amount">${fmtMoney(activeLoan.outstandingBalance)}</b></div>` : `<div class="meta">No active loan.</div>`}
     <div class="meta" style="margin-top:4px; margin-bottom:6px;">Total interest charged this FY: <b>${fmtMoney(totalInterestFY)}</b></div>
     ${loanTable}
@@ -259,6 +259,21 @@ async function openMemberDetail(id){
       <button class="btn block" style="margin-top:10px;" onclick="promptLoanPayment('${currentLoanEntry.id}', ${currentLoanEntry.totalDue - currentLoanEntry.paymentMade})">Record Loan Payment (${monthLabel(currentLoanEntry.month)})</button>
     ` : ''}
     ${activeLoan ? `<button class="btn secondary block" style="margin-top:8px;" onclick="promptLoanTopup('${activeLoan.id}')">+ Top-up Loan</button>` : ''}
+
+    ${loans.length > 0 ? `
+      <div class="section-title" style="margin-top:14px;">All Loan Records (${loans.length})</div>
+      <div class="meta" style="margin-bottom:6px;">Includes closed/older loans — the totals above are still counting these unless you remove them here.</div>
+      <div class="card ledger" style="padding:4px 10px;">
+        ${loans.map(l=>`
+          <div class="row" onclick="closeModal(); openLoanDetail('${l.id}')" style="cursor:pointer; padding:9px 0;">
+            <div>
+              <div class="who" style="font-size:13.5px;">Principal ${fmtMoney(l.principal)} · issued ${l.dateIssued}</div>
+              <div class="meta">Status: ${l.status}</div>
+            </div>
+            <div class="amount" style="font-size:13.5px;">${fmtMoney(l.outstandingBalance||0)}</div>
+          </div>`).join('')}
+      </div>
+    ` : ''}
 
     <div style="display:flex; gap:10px; margin-top:16px;">
       <button class="btn secondary block" onclick='openMemberForm(${JSON.stringify(m)})'>Edit</button>
