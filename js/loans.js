@@ -49,7 +49,12 @@ async function processLoanMonth(loanId, mKey){
   // an existing entry) can never scramble the running balance.
   const prior = ledger.filter(e => e.month < mKey).pop();
   const opening = prior ? prior.closingBalance : loan.principal;
-  const interest = Math.round(opening * (SOCIETY.monthlyInterestPct/100) * 100) / 100;
+
+  // No interest in the month the loan was actually issued — it only
+  // starts accruing from the following month onward.
+  const issuanceMonth = (loan.dateIssued || '').slice(0,7);
+  const isIssuanceMonth = mKey === issuanceMonth;
+  const interest = isIssuanceMonth ? 0 : Math.round(opening * (SOCIETY.monthlyInterestPct/100) * 100) / 100;
   const totalDue = Math.round((opening + interest) * 100) / 100;
 
   const ref = await db.collection('loanLedger').add({
@@ -244,7 +249,7 @@ async function openLoanDetail(loanId){
       <div class="row">
         <div>
           <div class="who">${monthLabel(e.month)}</div>
-          <div class="meta">Opening ${fmtMoney(e.openingBalance)} + ${SOCIETY.monthlyInterestPct}% (${fmtMoney(e.interest)})</div>
+          <div class="meta">Opening ${fmtMoney(e.openingBalance)}${e.interest>0 ? ` + ${SOCIETY.monthlyInterestPct}% (${fmtMoney(e.interest)})` : ' (issuance month — no interest yet)'}</div>
           ${e.topupAmount ? `<div class="meta">+ ${fmtMoney(e.topupAmount)} top-up this month</div>` : ''}
           <a href="javascript:void(0)" style="font-size:11.5px; color:#B33A3A;" onclick="deleteLoanLedgerEntry('${e.id}', '${loanId}')">Delete this entry</a>
         </div>
