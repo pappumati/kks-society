@@ -74,7 +74,7 @@ async function doLogin(){
   try{
     await auth.signInWithEmailAndPassword(usernameToEmail(u), p);
   }catch(e){
-    errEl.textContent = 'Invalid username or password.';
+    errEl.textContent = 'Invalid username or password. (' + (e.code || e.message) + ')';
   }
 }
 
